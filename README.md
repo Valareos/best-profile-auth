@@ -1,24 +1,24 @@
-# Best Trainer Auth
+# Best Trainer Auth (Cobblemon Edition)
 
-A Fabric server-side trainer login system designed for Cobblemon servers and shared-computer environments.
+A Fabric server-side profile login system designed for Cobblemon servers and shared-computer environments.
 
-This mod allows multiple persistent **trainer characters** to exist independently of the Minecraft account used to connect to the server.
+This mod allows multiple persistent **profiles** to exist independently of the Minecraft account used to connect to the server.
 
-Originally developed for **Best Disability Support** to allow participants using shared computers to maintain their own characters without needing their own Minecraft accounts.
+Originally developed for **Best Disability Support** to allow participants using shared computers to maintain their own characters without needing their own dedicated Minecraft accounts.
 
 https://bestdisabilitysupport.com.au
 
 ---
 
-## Key Concept
+# Key Concept
 
 Most Minecraft servers identify players by **UUID**, which ties a player to a specific Minecraft account.
 
 Best Trainer Auth instead treats the Minecraft account as **transport only**.
 
-A player logs in using a **Trainer Key + PIN**, which loads that trainer's saved state.
+A player logs in using a **profile key + password**, which loads that profile's saved state.
 
-Each trainer has their own:
+Each profile has its own:
 
 - Inventory
 - Location
@@ -30,59 +30,90 @@ This allows persistent characters even when players use different computers or M
 
 ---
 
-## Features
+# Features
 
-- Multiple trainer identities per server
-- Trainer authentication using PIN codes
+- Multiple persistent profiles per server
+- Profile authentication using passwords
 - Automatic swapping of player save data
 - Compatible with Cobblemon
 - Works behind Velocity proxy setups
 - Designed for shared computer environments
 - Snapshot-based player data system
+- Automatic autosaves
+- Rotating per-profile backups
+- Backup retention limit
+- Supports both `/trainer` and `/profile` commands
 
 ---
 
-## Commands
+# Commands
 
-### Player Commands
+## Player Commands
 
-/trainer login <key> <pin>  
-/trainer logout  
-/trainer whoami  
+/profile login `<key>` `<password>`  
+/profile logout  
+/profile whoami  
 
-### Admin Commands
+## Admin Commands
 
-/trainer create <key> <pin>  
-/trainer delete <key>  
-/trainer setpin <key> <pin>  
-/trainer enable <key>  
-/trainer disable <key>  
-/trainer list  
+/profile create `<key>` `<password>`  
+/profile delete `<key>`  
+/profile setpassword `<key>` `<password>`  
+/profile enable `<key>`  
+/profile disable `<key>`  
+/profile list  
+
+## Legacy Compatibility
+
+The mod also supports legacy `/trainer ...` commands for backward compatibility.
 
 ---
 
-## How It Works
+# How It Works
 
 Instead of changing player UUIDs, this mod swaps the underlying player data files before login.
 
-When a trainer logs in:
+When a profile logs in:
 
-1. The trainer key is authenticated.
-2. The player reconnects.
-3. The server loads the trainer's saved snapshot.
-4. Minecraft loads the player normally using that snapshot.
+1. The profile key is authenticated
+2. The player reconnects
+3. The server loads the profile's saved snapshot
+4. Minecraft loads the player normally using that snapshot
 
-When a trainer logs out:
+When a profile logs out:
 
-1. Current player data is saved as a trainer snapshot.
-2. The player reconnects.
-3. They may log in as a different trainer.
+1. Current player data is saved as a profile snapshot
+2. The player reconnects
+3. They may log in as a different profile
 
-This ensures data isolation between trainers.
+This ensures data isolation between profiles.
 
 ---
 
-## Intended Use Cases
+# Autosave and Backups
+
+Best Trainer Auth automatically protects profile progress.
+
+It supports:
+
+- Save on logout
+- Save on disconnect
+- Save on server stop
+- Timed autosaves
+- Rotating backups per profile
+
+By default:
+
+- autosave runs every **5 minutes**
+- the last **10 backups per profile** are kept
+
+These settings can be changed in:
+
+`config/best-trainer-auth/config.json`
+
+---
+
+# Intended Use Cases
 
 - Shared computer environments
 - Disability support centres
@@ -93,16 +124,16 @@ This ensures data isolation between trainers.
 
 ---
 
-## Requirements
+# Requirements
 
-- Minecraft 1.21.1
+- Minecraft **1.21.1**
 - Fabric Loader
 - Fabric API
 - Cobblemon
 
 ---
 
-## Compatibility
+# Compatibility
 
 Developed and tested with:
 
@@ -114,29 +145,52 @@ Other modpacks may work but have not been extensively tested.
 
 ---
 
-## Building
+# Building
 
 Run:
 
+```
 ./gradlew build
+```
 
 The compiled mod will appear in:
 
+```
 build/libs/
+```
 
 ---
 
-## Known Limitations
+# Configuration
 
-- Trainer switching currently requires a reconnect.
-- Designed primarily for Cobblemon environments.
-- Large public servers may wish to extend command functionality.
+Example config:
+
+```json
+{
+  "configVersion": 2,
+  "adminBypassPermissionLevel": 4,
+  "lockMovement": true,
+  "lockInteractions": true,
+  "lockBlockBreaking": true,
+  "lockCombat": true,
+  "autosaveIntervalTicks": 6000,
+  "maxBackupsPerProfile": 10
+}
+```
 
 ---
 
-## Credits
+# Known Limitations
 
-Developed by **Best Disability Support**.
+- Profile switching currently requires a reconnect
+- Designed primarily for Cobblemon environments
+- Other mods may need dedicated support handlers in future versions
+
+---
+
+# Credits
+
+Developed by **Best Disability Support**
 
 https://bestdisabilitysupport.com.au
 
@@ -144,7 +198,7 @@ This mod was created to support inclusive gaming environments and shared compute
 
 ---
 
-## Contributing
+# Contributing
 
 Pull requests and improvements are welcome.
 
@@ -152,9 +206,9 @@ If you build improvements or extensions, please ensure attribution to **Best Dis
 
 ---
 
-## License
+# License
 
-Licensed under the **Apache License 2.0**.
+Licensed under the Apache License 2.0 with an additional attribution requirement.
 
 Attribution to **Best Disability Support (https://bestdisabilitysupport.com.au)** must be preserved in derivative works.
 

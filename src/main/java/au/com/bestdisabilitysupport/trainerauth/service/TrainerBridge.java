@@ -2,20 +2,25 @@ package au.com.bestdisabilitysupport.trainerauth.service;
 
 import au.com.bestdisabilitysupport.trainerauth.config.ModConfig;
 import au.com.bestdisabilitysupport.trainerauth.util.KeyNormalizer;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtIo;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.network.ServerPlayerEntity;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Comparator;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Stream;
 
 public final class TrainerBridge {
+    private static final DateTimeFormatter BACKUP_STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss");
+
     private final MinecraftServer server;
     private final ModConfig config;
     private final TrainerSelectionStore selectionStore;
@@ -59,11 +64,20 @@ public final class TrainerBridge {
         try {
             if (stillExists) {
                 ensureTrainerFolder(trainerKey);
-                saveLivePlayerToSnapshot(player, snapshotFolder(trainerKey));
+                saveLivePlayerToSnapshot(player, snapshotFolder(trainerKey), true);
             }
         } finally {
             selectionStore.clearAll(player.getUuid());
         }
+    }
+
+    public void autosaveActiveProfile(ServerPlayerEntity player, String trainerKey, boolean stillExists) {
+        if (!stillExists) {
+            return;
+        }
+
+        ensureTrainerFolder(trainerKey);
+        saveLivePlayerToSnapshot(player, snapshotFolder(trainerKey), true);
     }
 
     public boolean deleteTrainerData(String trainerKey) {
@@ -109,6 +123,10 @@ public final class TrainerBridge {
         return trainerFolder(trainerKey).resolve("snapshot");
     }
 
+    private Path backupsFolder(String trainerKey) {
+        return trainerFolder(trainerKey).resolve("backups");
+    }
+
     private Path worldFolder() {
         return server.getRunDirectory().resolve("world");
     }
@@ -116,6 +134,7 @@ public final class TrainerBridge {
     private void ensureTrainerFolder(String trainerKey) {
         try {
             Files.createDirectories(snapshotFolder(trainerKey));
+            Files.createDirectories(backupsFolder(trainerKey));
         } catch (IOException e) {
             throw new RuntimeException("Failed to create trainer folder for " + trainerKey, e);
         }
@@ -130,31 +149,37 @@ public final class TrainerBridge {
                 || Files.exists(snapshot.resolve("pc"));
     }
 
-private void saveLivePlayerToSnapshot(ServerPlayerEntity player, Path snapshot) {
-    UUID uuid = player.getUuid();
+    private void saveLivePlayerToSnapshot(ServerPlayerEntity player, Path snapshot, boolean makeBackup) {
+        UUID uuid = player.getUuid();
 
-    try {
-        Files.createDirectories(snapshot);
-        Files.createDirectories(snapshot.resolve("party"));
-        Files.createDirectories(snapshot.resolve("pc"));
+        try {
+            if (makeBackup) {
+                backupExistingSnapshot(snapshot);
+            }
 
-        // Write the player's current in-memory vanilla data directly
-        NbtCompound playerNbt = new NbtCompound();
-        player.writeNbt(playerNbt);
-        NbtIo.writeCompressed(playerNbt, livePlayerdata(uuid));
+            Files.createDirectories(snapshot);
+            Files.createDirectories(snapshot.resolve("party"));
+            Files.createDirectories(snapshot.resolve("pc"));
 
-        copyIfExists(livePlayerdata(uuid), snapshot.resolve("playerdata.dat"));
-        copyIfExists(livePlayerdataOld(uuid), snapshot.resolve("playerdata.dat_old"));
+            NbtCompound playerNbt = new NbtCompound();
+            player.writeNbt(playerNbt);
+            NbtIo.writeCompressed(playerNbt, livePlayerdata(uuid));
 
-        copyIfExists(liveCobblemonPlayerData(uuid), snapshot.resolve("cobblemonplayerdata.json"));
-        copyIfExists(liveCobblemonPlayerDataOld(uuid), snapshot.resolve("cobblemonplayerdata.json.old"));
+            copyIfExists(livePlayerdata(uuid), snapshot.resolve("playerdata.dat"));
+            copyIfExists(livePlayerdataOld(uuid), snapshot.resolve("playerdata.dat_old"));
 
-        copyAllMatchingRecursive(livePartyDir(uuid), uuid.toString(), snapshot.resolve("party"));
-        copyAllMatchingRecursive(livePcDir(uuid), uuid.toString(), snapshot.resolve("pc"));
-    } catch (IOException e) {
-        throw new RuntimeException("Failed saving trainer snapshot for " + uuid, e);
+            copyIfExists(liveCobblemonPlayerData(uuid), snapshot.resolve("cobblemonplayerdata.json"));
+            copyIfExists(liveCobblemonPlayerDataOld(uuid), snapshot.resolve("cobblemonplayerdata.json.old"));
+
+            copyAllMatchingRecursive(livePartyDir(uuid), uuid.toString(), snapshot.resolve("party"));
+            copyAllMatchingRecursive(livePcDir(uuid), uuid.toString(), snapshot.resolve("pc"));
+
+            trimOldBackups(snapshot.getParent().resolve("backups"));
+        } catch (IOException e) {
+            throw new RuntimeException("Failed saving trainer snapshot for " + uuid, e);
+        }
     }
-}
+
     private void restoreSnapshotToLiveUuid(Path snapshot, UUID uuid) {
         try {
             Files.createDirectories(livePlayerdata(uuid).getParent());
@@ -178,7 +203,6 @@ private void saveLivePlayerToSnapshot(ServerPlayerEntity player, Path snapshot) 
             restoreAllMatching(snapshot.resolve("party"), livePartyDir(uuid), uuid.toString());
             restoreAllMatching(snapshot.resolve("pc"), livePcDir(uuid), uuid.toString());
 
-            // Backward compatibility with old single-file snapshots
             if (Files.exists(snapshot.resolve("playerparty.json"))) {
                 copyIfExists(snapshot.resolve("playerparty.json"), livePartyDir(uuid).resolve(uuid.toString() + ".json"));
             }
@@ -203,6 +227,74 @@ private void saveLivePlayerToSnapshot(ServerPlayerEntity player, Path snapshot) 
         } catch (IOException e) {
             throw new RuntimeException("Failed wiping live UUID data for " + uuid, e);
         }
+    }
+
+    private void backupExistingSnapshot(Path snapshot) throws IOException {
+        if (!Files.exists(snapshot) || !hasAnySnapshotData(snapshot)) {
+            return;
+        }
+
+        Path trainerFolder = snapshot.getParent();
+        Path backups = trainerFolder.resolve("backups");
+        Files.createDirectories(backups);
+
+        Path backupTarget = backups.resolve(BACKUP_STAMP.format(LocalDateTime.now()));
+        copyDirectory(snapshot, backupTarget);
+    }
+
+    private void trimOldBackups(Path backupsDir) throws IOException {
+        if (!Files.exists(backupsDir) || !Files.isDirectory(backupsDir)) {
+            return;
+        }
+
+        try (Stream<Path> stream = Files.list(backupsDir)) {
+            java.util.List<Path> dirs = stream
+                    .filter(Files::isDirectory)
+                    .sorted(Comparator.comparing(Path::getFileName).reversed())
+                    .toList();
+
+            for (int i = config.maxBackupsPerProfile(); i < dirs.size(); i++) {
+                deleteDirectory(dirs.get(i));
+            }
+        }
+    }
+
+    private static void copyDirectory(Path source, Path target) throws IOException {
+        Files.walkFileTree(source, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                Path relative = source.relativize(dir);
+                Files.createDirectories(target.resolve(relative));
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Path relative = source.relativize(file);
+                Files.copy(file, target.resolve(relative), StandardCopyOption.REPLACE_EXISTING);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    private static void deleteDirectory(Path dir) throws IOException {
+        if (!Files.exists(dir)) {
+            return;
+        }
+
+        Files.walkFileTree(dir, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Files.deleteIfExists(file);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path current, IOException exc) throws IOException {
+                Files.deleteIfExists(current);
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 
     private Path livePlayerdata(UUID uuid) {

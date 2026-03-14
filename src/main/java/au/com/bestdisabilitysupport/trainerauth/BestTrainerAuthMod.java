@@ -8,6 +8,7 @@ import au.com.bestdisabilitysupport.trainerauth.service.TrainerSessionService;
 import au.com.bestdisabilitysupport.trainerauth.service.TrainerStore;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -18,8 +19,6 @@ import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
-import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
-import net.minecraft.entity.damage.DamageSource;
 import net.minecraft.item.ItemStack;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -40,26 +39,35 @@ public final class BestTrainerAuthMod implements ModInitializer {
     private static TrainerStore trainerStore;
     private static TrainerSessionService sessionService;
     private static TrainerBridge trainerBridge;
+    private static long tickCounter = 0L;
 
     @Override
     public void onInitialize() {
         LOGGER.info("Initializing {}", MOD_ID);
 
-ServerLivingEntityEvents.ALLOW_DAMAGE.register((entity, source, amount) -> {
-    if (entity instanceof ServerPlayerEntity player) {
-        if (LockService.isLocked(player, sessionService)) {
-            return false;
-        }
-    }
-    return true;
-});
         ServerLifecycleEvents.SERVER_STARTING.register(minecraftServer -> {
             server = minecraftServer;
             config = ModConfig.loadOrCreate(minecraftServer);
             trainerStore = new TrainerStore(minecraftServer);
             sessionService = new TrainerSessionService();
             trainerBridge = new TrainerBridge(minecraftServer, config);
+            tickCounter = 0L;
             LOGGER.info("{} loaded successfully.", MOD_ID);
+        });
+
+        ServerLifecycleEvents.SERVER_STOPPING.register(minecraftServer -> {
+            if (sessionService == null || trainerBridge == null || trainerStore == null) {
+                return;
+            }
+
+            for (ServerPlayerEntity player : minecraftServer.getPlayerManager().getPlayerList()) {
+                sessionService.state(player.getUuid())
+                        .flatMap(state -> java.util.Optional.ofNullable(state.trainerKey()))
+                        .ifPresent(trainerKey -> {
+                            boolean stillExists = trainerStore.exists(trainerKey);
+                            trainerBridge.onDisconnect(player, trainerKey, stillExists);
+                        });
+            }
         });
 
         CommandRegistrationCallback.EVENT.register(TrainerCommand::register);
@@ -73,34 +81,50 @@ ServerLivingEntityEvents.ALLOW_DAMAGE.register((entity, source, amount) -> {
                 player.sendMessage(Text.literal("Logged in as trainer: " + activated.get()), false);
             } else {
                 sessionService.markPending(player, player.getPos(), player.getYaw(), player.getPitch());
-                player.sendMessage(Text.literal("You must login as a Trainer."), false);
-                player.sendMessage(Text.literal("Use /trainer login <TrainerID> <PIN>"), false);
-            }
+		player.sendMessage(Text.literal("You must login with a profile."), false);
+		player.sendMessage(Text.literal("Use /profile login <key> <password>"), false);            }
         });
 
-	ServerPlayConnectionEvents.DISCONNECT.register((handler, minecraftServer) -> {
- 	   ServerPlayerEntity player = handler.getPlayer();
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, minecraftServer) -> {
+            ServerPlayerEntity player = handler.getPlayer();
 
- 	   sessionService.state(player.getUuid())
-           	 .flatMap(state -> java.util.Optional.ofNullable(state.trainerKey()))
-           	 .ifPresent(trainerKey -> {
-                	boolean stillExists = trainerStore.exists(trainerKey);
-                	trainerBridge.onDisconnect(player, trainerKey, stillExists);
-	 });
+            sessionService.state(player.getUuid())
+                    .flatMap(state -> java.util.Optional.ofNullable(state.trainerKey()))
+                    .ifPresent(trainerKey -> {
+                        boolean stillExists = trainerStore.exists(trainerKey);
+                        trainerBridge.onDisconnect(player, trainerKey, stillExists);
+                    });
 
-    	sessionService.clear(player.getUuid());
-	});
+            sessionService.clear(player.getUuid());
+        });
+
         ServerPlayerEvents.COPY_FROM.register((oldPlayer, newPlayer, alive) -> {
             sessionService.copyConnectionState(oldPlayer, newPlayer);
         });
 
         ServerTickEvents.END_SERVER_TICK.register(minecraftServer -> {
-            if (sessionService == null || config == null) {
+            if (sessionService == null || config == null || trainerBridge == null || trainerStore == null) {
                 return;
             }
 
+            tickCounter++;
+
             for (ServerPlayerEntity player : minecraftServer.getPlayerManager().getPlayerList()) {
                 LockService.tickLockedPlayer(player, sessionService, config);
+            }
+
+            long autosaveInterval = config.autosaveIntervalTicks();
+            if (autosaveInterval > 0 && tickCounter % autosaveInterval == 0) {
+                for (ServerPlayerEntity player : minecraftServer.getPlayerManager().getPlayerList()) {
+                    sessionService.state(player.getUuid())
+                            .flatMap(state -> java.util.Optional.ofNullable(state.trainerKey()))
+                            .ifPresent(trainerKey -> {
+                                boolean stillExists = trainerStore.exists(trainerKey);
+                                trainerBridge.autosaveActiveProfile(player, trainerKey, stillExists);
+                            });
+                }
+
+                LOGGER.info("[BestTrainerAuth] Autosave completed for active profiles.");
             }
         });
 
@@ -139,6 +163,15 @@ ServerLivingEntityEvents.ALLOW_DAMAGE.register((entity, source, amount) -> {
             }
             return TypedActionResult.pass(player.getStackInHand(hand));
         });
+
+        ServerLivingEntityEvents.ALLOW_DAMAGE.register((entity, source, amount) -> {
+            if (entity instanceof ServerPlayerEntity player) {
+                if (LockService.isLocked(player, sessionService)) {
+                    return false;
+                }
+            }
+            return true;
+        });
     }
 
     public static MinecraftServer server() {
@@ -161,3 +194,4 @@ ServerLivingEntityEvents.ALLOW_DAMAGE.register((entity, source, amount) -> {
         return trainerBridge;
     }
 }
+

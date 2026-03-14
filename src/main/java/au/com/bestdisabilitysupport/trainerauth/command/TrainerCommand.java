@@ -21,17 +21,21 @@ public final class TrainerCommand {
     public static void register(CommandDispatcher<ServerCommandSource> dispatcher,
                                 CommandRegistryAccess registryAccess,
                                 CommandManager.RegistrationEnvironment environment) {
+        registerRoot(dispatcher, "trainer");
+        registerRoot(dispatcher, "profile");
+    }
 
+    private static void registerRoot(CommandDispatcher<ServerCommandSource> dispatcher, String root) {
         dispatcher.register(
-                CommandManager.literal("trainer")
+                CommandManager.literal(root)
 
                         .then(CommandManager.literal("login")
                                 .then(CommandManager.argument("key", StringArgumentType.word())
-                                        .then(CommandManager.argument("pin", StringArgumentType.word())
+                                        .then(CommandManager.argument("password", StringArgumentType.word())
                                                 .executes(context -> {
                                                     ServerPlayerEntity player = context.getSource().getPlayerOrThrow();
                                                     String key = StringArgumentType.getString(context, "key");
-                                                    String pin = StringArgumentType.getString(context, "pin");
+                                                    String password = StringArgumentType.getString(context, "password");
 
                                                     String currentTrainer = BestTrainerAuthMod.sessionService().state(player.getUuid())
                                                             .flatMap(state -> java.util.Optional.ofNullable(state.trainerKey()))
@@ -39,29 +43,29 @@ public final class TrainerCommand {
 
                                                     if (currentTrainer != null) {
                                                         throw new SimpleCommandExceptionType(
-                                                                Text.literal("You are already logged into trainer: " + currentTrainer + ". Use /trainer logout first.")
+                                                                Text.literal("You are already logged into profile: " + currentTrainer + ". Use /" + root + " logout first.")
                                                         ).create();
                                                     }
 
                                                     TrainerAccount account = BestTrainerAuthMod.trainerStore().get(key)
                                                             .orElseThrow(() -> new SimpleCommandExceptionType(
-                                                                    Text.literal("Trainer key not found.")
+                                                                    Text.literal("Profile key not found.")
                                                             ).create());
 
                                                     if (!account.enabled()) {
                                                         throw new SimpleCommandExceptionType(
-                                                                Text.literal("Trainer key is disabled.")
+                                                                Text.literal("Profile key is disabled.")
                                                         ).create();
                                                     }
 
-                                                    if (!PinHasher.matches(pin, account.pinHash())) {
+                                                    if (!PinHasher.matches(password, account.pinHash())) {
                                                         throw new SimpleCommandExceptionType(
-                                                                Text.literal("Incorrect PIN.")
+                                                                Text.literal("Incorrect password.")
                                                         ).create();
                                                     }
 
                                                     BestTrainerAuthMod.trainerBridge().requestLogin(player.getUuid(), account.key());
-                                                    disconnectNextTick(player, "Trainer " + account.key() + " selected. Reconnect now.");
+                                                    disconnectNextTick(player, "Profile " + account.key() + " selected. Reconnect now.");
                                                     return 1;
                                                 }))
                                 )
@@ -77,7 +81,7 @@ public final class TrainerCommand {
 
                                     if (trainerKey == null) {
                                         throw new SimpleCommandExceptionType(
-                                                Text.literal("You are not logged into a trainer.")
+                                                Text.literal("You are not logged into a profile.")
                                         ).create();
                                     }
 
@@ -85,7 +89,7 @@ public final class TrainerCommand {
                                     BestTrainerAuthMod.trainerBridge().onDisconnect(player, trainerKey, stillExists);
                                     BestTrainerAuthMod.sessionService().clear(player.getUuid());
 
-                                    disconnectNextTick(player, "Trainer session saved. Reconnect to choose another trainer.");
+                                    disconnectNextTick(player, "Profile session saved. Reconnect to choose another profile.");
                                     return 1;
                                 })
                         )
@@ -96,7 +100,7 @@ public final class TrainerCommand {
                                     String trainerKey = BestTrainerAuthMod.sessionService().state(player.getUuid())
                                             .flatMap(state -> java.util.Optional.ofNullable(state.trainerKey()))
                                             .orElse("none selected");
-                                    context.getSource().sendFeedback(() -> Text.literal("Trainer: " + trainerKey), false);
+                                    context.getSource().sendFeedback(() -> Text.literal("Profile: " + trainerKey), false);
                                     return 1;
                                 })
                         )
@@ -104,20 +108,20 @@ public final class TrainerCommand {
                         .then(CommandManager.literal("create")
                                 .requires(source -> source.hasPermissionLevel(BestTrainerAuthMod.config().adminBypassPermissionLevel()))
                                 .then(CommandManager.argument("key", StringArgumentType.word())
-                                        .then(CommandManager.argument("pin", StringArgumentType.word())
+                                        .then(CommandManager.argument("password", StringArgumentType.word())
                                                 .executes(context -> {
                                                     String key = StringArgumentType.getString(context, "key");
-                                                    String pin = StringArgumentType.getString(context, "pin");
+                                                    String password = StringArgumentType.getString(context, "password");
 
                                                     if (BestTrainerAuthMod.trainerStore().exists(key)) {
                                                         throw new SimpleCommandExceptionType(
-                                                                Text.literal("Trainer key already exists.")
+                                                                Text.literal("Profile key already exists.")
                                                         ).create();
                                                     }
 
                                                     TrainerAccount created = BestTrainerAuthMod.trainerStore()
-                                                            .create(key, PinHasher.hash(pin), context.getSource().getName());
-                                                    context.getSource().sendFeedback(() -> Text.literal("Created trainer: " + created.key()), true);
+                                                            .create(key, PinHasher.hash(password), context.getSource().getName());
+                                                    context.getSource().sendFeedback(() -> Text.literal("Created profile: " + created.key()), true);
                                                     return 1;
                                                 }))
                                 )
@@ -134,24 +138,39 @@ public final class TrainerCommand {
 
                                             if (!removed && !removedData) {
                                                 throw new SimpleCommandExceptionType(
-                                                        Text.literal("Trainer key not found.")
+                                                        Text.literal("Profile key not found.")
                                                 ).create();
                                             }
 
-                                            context.getSource().sendFeedback(() -> Text.literal("Deleted trainer: " + key), true);
+                                            context.getSource().sendFeedback(() -> Text.literal("Deleted profile: " + key), true);
                                             return 1;
                                         }))
                         )
 
+                        .then(CommandManager.literal("setpassword")
+                                .requires(source -> source.hasPermissionLevel(BestTrainerAuthMod.config().adminBypassPermissionLevel()))
+                                .then(CommandManager.argument("key", StringArgumentType.word())
+                                        .then(CommandManager.argument("password", StringArgumentType.word())
+                                                .executes(context -> {
+                                                    String key = StringArgumentType.getString(context, "key");
+                                                    String password = StringArgumentType.getString(context, "password");
+                                                    BestTrainerAuthMod.trainerStore().updatePin(key, PinHasher.hash(password));
+                                                    context.getSource().sendFeedback(() -> Text.literal("Updated password for: " + key), true);
+                                                    return 1;
+                                                }))
+                                )
+                        )
+
+                        // Legacy alias
                         .then(CommandManager.literal("setpin")
                                 .requires(source -> source.hasPermissionLevel(BestTrainerAuthMod.config().adminBypassPermissionLevel()))
                                 .then(CommandManager.argument("key", StringArgumentType.word())
-                                        .then(CommandManager.argument("pin", StringArgumentType.word())
+                                        .then(CommandManager.argument("password", StringArgumentType.word())
                                                 .executes(context -> {
                                                     String key = StringArgumentType.getString(context, "key");
-                                                    String pin = StringArgumentType.getString(context, "pin");
-                                                    BestTrainerAuthMod.trainerStore().updatePin(key, PinHasher.hash(pin));
-                                                    context.getSource().sendFeedback(() -> Text.literal("Updated PIN for: " + key), true);
+                                                    String password = StringArgumentType.getString(context, "password");
+                                                    BestTrainerAuthMod.trainerStore().updatePin(key, PinHasher.hash(password));
+                                                    context.getSource().sendFeedback(() -> Text.literal("Updated password for: " + key), true);
                                                     return 1;
                                                 }))
                                 )
@@ -163,7 +182,7 @@ public final class TrainerCommand {
                                         .executes(context -> {
                                             String key = StringArgumentType.getString(context, "key");
                                             BestTrainerAuthMod.trainerStore().setEnabled(key, false);
-                                            context.getSource().sendFeedback(() -> Text.literal("Disabled trainer: " + key), true);
+                                            context.getSource().sendFeedback(() -> Text.literal("Disabled profile: " + key), true);
                                             return 1;
                                         })
                                 )
@@ -175,7 +194,7 @@ public final class TrainerCommand {
                                         .executes(context -> {
                                             String key = StringArgumentType.getString(context, "key");
                                             BestTrainerAuthMod.trainerStore().setEnabled(key, true);
-                                            context.getSource().sendFeedback(() -> Text.literal("Enabled trainer: " + key), true);
+                                            context.getSource().sendFeedback(() -> Text.literal("Enabled profile: " + key), true);
                                             return 1;
                                         })
                                 )
@@ -188,7 +207,7 @@ public final class TrainerCommand {
                                             .sorted(Comparator.comparing(TrainerAccount::key))
                                             .map(account -> account.key() + (account.enabled() ? "" : " [disabled]"))
                                             .reduce((left, right) -> left + ", " + right)
-                                            .orElse("No trainer keys exist yet.");
+                                            .orElse("No profiles exist yet.");
                                     context.getSource().sendFeedback(() -> Text.literal(joined), false);
                                     return 1;
                                 })
@@ -197,7 +216,14 @@ public final class TrainerCommand {
                         .then(CommandManager.literal("help")
                                 .executes(context -> {
                                     context.getSource().sendFeedback(
-                                            () -> Text.literal("/trainer login <key> <pin>, /trainer logout, /trainer whoami, /trainer create <key> <pin>, /trainer delete <key>"),
+                                            () -> Text.literal(
+                                                    "/" + root + " login <key> <password>, " +
+                                                    "/" + root + " logout, " +
+                                                    "/" + root + " whoami, " +
+                                                    "/" + root + " create <key> <password>, " +
+                                                    "/" + root + " delete <key>, " +
+                                                    "/" + root + " setpassword <key> <password>"
+                                            ),
                                             false
                                     );
                                     return 1;
