@@ -1,48 +1,25 @@
-# Best Trainer Auth (Cobblemon Edition)
+# Best Profile Auth (Best Trainer Auth)
 
-A Fabric server-side profile login system designed for Cobblemon servers and shared-computer environments.
+A Minecraft server-side mod that allows multiple persistent player profiles per account, designed especially for shared-computer environments.
 
-This mod allows multiple persistent **profiles** to exist independently of the Minecraft account used to connect to the server.
-
-Originally developed for **Best Disability Support** to allow participants using shared computers to maintain their own characters without needing their own dedicated Minecraft accounts.
-
-https://bestdisabilitysupport.com.au
-
----
-
-# Key Concept
-
-Most Minecraft servers identify players by **UUID**, which ties a player to a specific Minecraft account.
-
-Best Trainer Auth instead treats the Minecraft account as **transport only**.
-
-A player logs in using a **profile key + password**, which loads that profile's saved state.
-
-Each profile has its own:
-
-- Inventory
-- Location
-- Cobblemon party
-- Cobblemon PC storage
-- Vanilla player data
-
-This allows persistent characters even when players use different computers or Minecraft accounts.
+Originally built for use at Best Disability Support, this mod enables multiple users to safely share the same Minecraft account or device while maintaining completely separate inventories, locations, and (optionally) mod-specific data such as Cobblemon Pokémon.
 
 ---
 
 # Features
 
-- Multiple persistent profiles per server
-- Profile authentication using passwords
-- Automatic swapping of player save data
-- Compatible with Cobblemon
-- Works behind Velocity proxy setups
-- Designed for shared computer environments
-- Snapshot-based player data system
-- Automatic autosaves
-- Rotating per-profile backups
-- Backup retention limit
-- Supports both `/trainer` and `/profile` commands
+- Multiple profiles per server
+- Password-protected profile login
+- Works across different computers and accounts
+- Full inventory, position, and data swapping
+- Cobblemon support (party + PC storage)
+- Automatic autosave on logout and intervals
+- Rotating backup system with retention limits
+- Config auto-upgrade system
+- Profile-based session system
+- Dual command support (`/trainer` and `/profile`)
+- Existing-server migration support (`/profile claimcurrent`)
+- Safe disconnect handling to prevent data loss
 
 ---
 
@@ -50,113 +27,95 @@ This allows persistent characters even when players use different computers or M
 
 ## Player Commands
 
-/profile login `<key>` `<password>`  
-/profile logout  
-/profile whoami  
+- `/profile login <key> <password>`  
+  Log into a profile
+
+- `/profile logout`  
+  Save and exit current profile
+
+- `/profile whoami`  
+  Displays current active profile
+
+- `/profile claimcurrent <key> <password>`  
+  Imports your current server progress into a new profile (one-time use)
+
+---
 
 ## Admin Commands
 
-/profile create `<key>` `<password>`  
-/profile delete `<key>`  
-/profile setpassword `<key>` `<password>`  
-/profile enable `<key>`  
-/profile disable `<key>`  
-/profile list  
-
-## Legacy Compatibility
-
-The mod also supports legacy `/trainer ...` commands for backward compatibility.
+- `/profile create <key> <password>`
+- `/profile delete <key>`
+- `/profile setpassword <key> <password>`
+- `/profile enable <key>`
+- `/profile disable <key>`
+- `/profile list`
 
 ---
 
 # How It Works
 
-Instead of changing player UUIDs, this mod swaps the underlying player data files before login.
+Each profile stores its own snapshot of player data, including:
 
-When a profile logs in:
+- Inventory
+- Position
+- Health and status
+- Cobblemon Pokémon (if installed)
 
-1. The profile key is authenticated
-2. The player reconnects
-3. The server loads the profile's saved snapshot
-4. Minecraft loads the player normally using that snapshot
+When a player logs in:
+1. The current live UUID data is saved
+2. The selected profile snapshot is loaded
+3. The player is reconnected into that profile
 
-When a profile logs out:
-
-1. Current player data is saved as a profile snapshot
-2. The player reconnects
-3. They may log in as a different profile
-
-This ensures data isolation between profiles.
-
----
-
-# Autosave and Backups
-
-Best Trainer Auth automatically protects profile progress.
-
-It supports:
-
-- Save on logout
-- Save on disconnect
-- Save on server stop
-- Timed autosaves
-- Rotating backups per profile
-
-By default:
-
-- autosave runs every **5 minutes**
-- the last **10 backups per profile** are kept
-
-These settings can be changed in:
-
-`config/best-trainer-auth/config.json`
+When logging out:
+1. The profile snapshot is updated
+2. The live UUID is cleared
+3. The player is disconnected safely
 
 ---
 
-# Intended Use Cases
+# Existing Server Migration
 
-- Shared computer environments
-- Disability support centres
-- Schools and training labs
-- LAN events
-- Cobblemon servers
-- Roleplay servers with multiple characters
+If this mod is installed on an already-established server, players may already have progress tied to their normal Minecraft UUID save before profiles were introduced.
 
----
+To import that existing progress into a new profile, use:
 
-# Requirements
+`/profile claimcurrent <key> <password>`
 
-- Minecraft **1.21.1**
-- Fabric Loader
-- Fabric API
-- Cobblemon
+This will:
+- Copy your current UUID-based data into a new profile
+- Mark your account as migrated
+- Prevent duplicate imports
+
+This is intended as a **one-time operation per Minecraft account UUID**.
 
 ---
 
-# Compatibility
+# Profile Storage Structure
 
-Developed and tested with:
-
-- Fabric
-- Cobblemon
-- Velocity proxy environments
-
-Other modpacks may work but have not been extensively tested.
-
----
-
-# Building
-
-Run:
+Profiles are stored under:
 
 ```
-./gradlew build
+config/best-trainer-auth/trainers/<profile>/
 ```
 
-The compiled mod will appear in:
+Snapshots now use handler-based storage:
 
 ```
-build/libs/
+snapshot/
+  vanilla/
+    playerdata.dat
+    playerdata.dat_old
+  cobblemon/
+    cobblemonplayerdata.json
+    cobblemonplayerdata.json.old
+    party/
+    pc/
+```
+
+Backups are stored in:
+
+```
+backups/<timestamp>/
 ```
 
 ---
@@ -167,49 +126,87 @@ Example config:
 
 ```json
 {
-  "configVersion": 2,
   "adminBypassPermissionLevel": 4,
   "lockMovement": true,
   "lockInteractions": true,
   "lockBlockBreaking": true,
   "lockCombat": true,
-  "autosaveIntervalTicks": 6000,
-  "maxBackupsPerProfile": 10
+  "maxBackupsPerProfile": 10,
+  "autosaveIntervalSeconds": 300
 }
 ```
 
----
-
-# Known Limitations
-
-- Profile switching currently requires a reconnect
-- Designed primarily for Cobblemon environments
-- Other mods may need dedicated support handlers in future versions
+The config file automatically upgrades when new versions are installed.
 
 ---
 
-# Credits
+# Safety Features
 
-Developed by **Best Disability Support**
+- Prevents login while already in a profile
+- Forces reconnect on profile switch
+- Locks player actions until logged in
+- Automatic backups before overwrite
+- Backup rotation system
+- Migration protection (prevents duplicate imports)
 
+---
+
+# Important Warning
+
+Once profiles are in use, player progression may exist primarily inside profile snapshots rather than only in the default UUID save files.
+
+If this mod is removed from a server without first migrating profile data back to standard UUID-based player storage, profile progress may become inaccessible.
+
+For this reason, server owners should treat Best Profile Auth as a data-owning system once deployed.
+
+A future utility or migration tool may be provided to export a selected profile back to a single standard UUID save for transition away from the mod.
+
+---
+
+# Compatibility
+
+## Supported
+- Fabric servers
+- Cobblemon (full support)
+
+## Planned
+- Generic mod handler system
+- Additional mod integrations
+- Vanilla-only full support mode
+- Cross-loader compatibility (future)
+
+---
+
+# Project Origin
+
+This mod was created for:
+
+Best Disability Support  
 https://bestdisabilitysupport.com.au
 
-This mod was created to support inclusive gaming environments and shared computer access for participants.
-
----
-
-# Contributing
-
-Pull requests and improvements are welcome.
-
-If you build improvements or extensions, please ensure attribution to **Best Disability Support** remains intact as required by the license.
+It was designed to allow participants using shared computers to maintain persistent characters in Minecraft.
 
 ---
 
 # License
 
-Licensed under the Apache License 2.0 with an additional attribution requirement.
+This project is open source.
 
-Attribution to **Best Disability Support (https://bestdisabilitysupport.com.au)** must be preserved in derivative works.
+Attribution is required:
 
-See the LICENSE file for full details.
+**Best Disability Support**  
+https://bestdisabilitysupport.com.au
+
+You are free to use, modify, and distribute this software, provided proper credit is given.
+
+---
+
+# Version
+
+v0.3.0
+
+- Introduced handler-based architecture
+- Added existing-server migration system
+- Added migration markers
+- Improved data safety and structure
+- Prepared foundation for future mod support expansion

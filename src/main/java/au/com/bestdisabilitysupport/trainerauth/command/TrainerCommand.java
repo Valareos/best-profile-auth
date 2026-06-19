@@ -13,6 +13,7 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 
 import java.util.Comparator;
+import java.util.Optional;
 
 public final class TrainerCommand {
     private TrainerCommand() {
@@ -37,13 +38,13 @@ public final class TrainerCommand {
                                                     String key = StringArgumentType.getString(context, "key");
                                                     String password = StringArgumentType.getString(context, "password");
 
-                                                    String currentTrainer = BestTrainerAuthMod.sessionService().state(player.getUuid())
-                                                            .flatMap(state -> java.util.Optional.ofNullable(state.trainerKey()))
+                                                    String currentProfile = BestTrainerAuthMod.sessionService().state(player.getUuid())
+                                                            .flatMap(state -> Optional.ofNullable(state.trainerKey()))
                                                             .orElse(null);
 
-                                                    if (currentTrainer != null) {
+                                                    if (currentProfile != null) {
                                                         throw new SimpleCommandExceptionType(
-                                                                Text.literal("You are already logged into profile: " + currentTrainer + ". Use /" + root + " logout first.")
+                                                                Text.literal("You are already logged into profile: " + currentProfile + ". Use /" + root + " logout first.")
                                                         ).create();
                                                     }
 
@@ -76,7 +77,7 @@ public final class TrainerCommand {
                                     ServerPlayerEntity player = context.getSource().getPlayerOrThrow();
 
                                     String trainerKey = BestTrainerAuthMod.sessionService().state(player.getUuid())
-                                            .flatMap(state -> java.util.Optional.ofNullable(state.trainerKey()))
+                                            .flatMap(state -> Optional.ofNullable(state.trainerKey()))
                                             .orElse(null);
 
                                     if (trainerKey == null) {
@@ -98,11 +99,63 @@ public final class TrainerCommand {
                                 .executes(context -> {
                                     ServerPlayerEntity player = context.getSource().getPlayerOrThrow();
                                     String trainerKey = BestTrainerAuthMod.sessionService().state(player.getUuid())
-                                            .flatMap(state -> java.util.Optional.ofNullable(state.trainerKey()))
+                                            .flatMap(state -> Optional.ofNullable(state.trainerKey()))
                                             .orElse("none selected");
                                     context.getSource().sendFeedback(() -> Text.literal("Profile: " + trainerKey), false);
                                     return 1;
                                 })
+                        )
+
+                        .then(CommandManager.literal("claimcurrent")
+                                .then(CommandManager.argument("key", StringArgumentType.word())
+                                        .then(CommandManager.argument("password", StringArgumentType.word())
+                                                .executes(context -> {
+                                                    ServerPlayerEntity player = context.getSource().getPlayerOrThrow();
+                                                    String key = StringArgumentType.getString(context, "key");
+                                                    String password = StringArgumentType.getString(context, "password");
+
+                                                    String currentProfile = BestTrainerAuthMod.sessionService().state(player.getUuid())
+                                                            .flatMap(state -> Optional.ofNullable(state.trainerKey()))
+                                                            .orElse(null);
+
+                                                    if (currentProfile != null) {
+                                                        throw new SimpleCommandExceptionType(
+                                                                Text.literal("You are already logged into a profile: " + currentProfile + ". Use /" + root + " logout first.")
+                                                        ).create();
+                                                    }
+
+                                                    if (BestTrainerAuthMod.migrationStore().hasMigrated(player.getUuid())) {
+                                                        String existing = BestTrainerAuthMod.migrationStore()
+                                                                .migratedProfile(player.getUuid())
+                                                                .orElse("unknown");
+                                                        throw new SimpleCommandExceptionType(
+                                                                Text.literal("This Minecraft account has already claimed existing server data into profile: " + existing)
+                                                        ).create();
+                                                    }
+
+                                                    if (!BestTrainerAuthMod.trainerBridge().hasLiveData(player.getUuid())) {
+                                                        throw new SimpleCommandExceptionType(
+                                                                Text.literal("No existing live server data was found to import.")
+                                                        ).create();
+                                                    }
+
+                                                    if (BestTrainerAuthMod.trainerStore().exists(key)) {
+                                                        throw new SimpleCommandExceptionType(
+                                                                Text.literal("Profile key already exists.")
+                                                        ).create();
+                                                    }
+
+                                                    TrainerAccount created = BestTrainerAuthMod.trainerStore()
+                                                            .create(key, PinHasher.hash(password), context.getSource().getName());
+
+                                                    BestTrainerAuthMod.trainerBridge().importCurrentLiveData(player, created.key());
+                                                    BestTrainerAuthMod.migrationStore().markMigrated(player.getUuid(), created.key());
+                                                    BestTrainerAuthMod.trainerBridge().requestLogin(player.getUuid(), created.key());
+
+                                                    disconnectNextTick(player, "Current server progress imported into profile " + created.key() + ". Reconnect now.");
+                                                    return 1;
+                                                }))
+                                )
                         )
 
                         .then(CommandManager.literal("create")
@@ -161,7 +214,6 @@ public final class TrainerCommand {
                                 )
                         )
 
-                        // Legacy alias
                         .then(CommandManager.literal("setpin")
                                 .requires(source -> source.hasPermissionLevel(BestTrainerAuthMod.config().adminBypassPermissionLevel()))
                                 .then(CommandManager.argument("key", StringArgumentType.word())
@@ -218,11 +270,12 @@ public final class TrainerCommand {
                                     context.getSource().sendFeedback(
                                             () -> Text.literal(
                                                     "/" + root + " login <key> <password>, " +
-                                                    "/" + root + " logout, " +
-                                                    "/" + root + " whoami, " +
-                                                    "/" + root + " create <key> <password>, " +
-                                                    "/" + root + " delete <key>, " +
-                                                    "/" + root + " setpassword <key> <password>"
+                                                            "/" + root + " logout, " +
+                                                            "/" + root + " whoami, " +
+                                                            "/" + root + " claimcurrent <key> <password>, " +
+                                                            "/" + root + " create <key> <password>, " +
+                                                            "/" + root + " delete <key>, " +
+                                                            "/" + root + " setpassword <key> <password>"
                                             ),
                                             false
                                     );

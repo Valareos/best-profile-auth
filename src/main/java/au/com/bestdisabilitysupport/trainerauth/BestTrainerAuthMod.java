@@ -3,6 +3,7 @@ package au.com.bestdisabilitysupport.trainerauth;
 import au.com.bestdisabilitysupport.trainerauth.command.TrainerCommand;
 import au.com.bestdisabilitysupport.trainerauth.config.ModConfig;
 import au.com.bestdisabilitysupport.trainerauth.service.LockService;
+import au.com.bestdisabilitysupport.trainerauth.service.MigrationStore;
 import au.com.bestdisabilitysupport.trainerauth.service.TrainerBridge;
 import au.com.bestdisabilitysupport.trainerauth.service.TrainerSessionService;
 import au.com.bestdisabilitysupport.trainerauth.service.TrainerStore;
@@ -39,6 +40,7 @@ public final class BestTrainerAuthMod implements ModInitializer {
     private static TrainerStore trainerStore;
     private static TrainerSessionService sessionService;
     private static TrainerBridge trainerBridge;
+    private static MigrationStore migrationStore;
     private static long tickCounter = 0L;
 
     @Override
@@ -51,6 +53,7 @@ public final class BestTrainerAuthMod implements ModInitializer {
             trainerStore = new TrainerStore(minecraftServer);
             sessionService = new TrainerSessionService();
             trainerBridge = new TrainerBridge(minecraftServer, config);
+            migrationStore = new MigrationStore(minecraftServer);
             tickCounter = 0L;
             LOGGER.info("{} loaded successfully.", MOD_ID);
         });
@@ -62,7 +65,7 @@ public final class BestTrainerAuthMod implements ModInitializer {
 
             for (ServerPlayerEntity player : minecraftServer.getPlayerManager().getPlayerList()) {
                 sessionService.state(player.getUuid())
-                        .flatMap(state -> java.util.Optional.ofNullable(state.trainerKey()))
+                        .flatMap(state -> Optional.ofNullable(state.trainerKey()))
                         .ifPresent(trainerKey -> {
                             boolean stillExists = trainerStore.exists(trainerKey);
                             trainerBridge.onDisconnect(player, trainerKey, stillExists);
@@ -78,18 +81,28 @@ public final class BestTrainerAuthMod implements ModInitializer {
             Optional<String> activated = trainerBridge.consumeActivatedTrainer(player.getUuid());
             if (activated.isPresent()) {
                 sessionService.setLoggedIn(player, activated.get());
-                player.sendMessage(Text.literal("Logged in as trainer: " + activated.get()), false);
+                player.sendMessage(Text.literal("Logged in as profile: " + activated.get()), false);
             } else {
                 sessionService.markPending(player, player.getPos(), player.getYaw(), player.getPitch());
-		player.sendMessage(Text.literal("You must login with a profile."), false);
-		player.sendMessage(Text.literal("Use /profile login <key> <password>"), false);            }
+                player.sendMessage(Text.literal("You must login with a profile."), false);
+                player.sendMessage(Text.literal("Use /profile login <key> <password>"), false);
+
+                if (migrationStore != null
+                        && !migrationStore.hasMigrated(player.getUuid())
+                        && trainerBridge.hasLiveData(player.getUuid())) {
+                    player.sendMessage(
+                            Text.literal("Existing server save detected. Use /profile claimcurrent <key> <password> to import your current progress into a new profile."),
+                            false
+                    );
+                }
+            }
         });
 
         ServerPlayConnectionEvents.DISCONNECT.register((handler, minecraftServer) -> {
             ServerPlayerEntity player = handler.getPlayer();
 
             sessionService.state(player.getUuid())
-                    .flatMap(state -> java.util.Optional.ofNullable(state.trainerKey()))
+                    .flatMap(state -> Optional.ofNullable(state.trainerKey()))
                     .ifPresent(trainerKey -> {
                         boolean stillExists = trainerStore.exists(trainerKey);
                         trainerBridge.onDisconnect(player, trainerKey, stillExists);
@@ -98,9 +111,9 @@ public final class BestTrainerAuthMod implements ModInitializer {
             sessionService.clear(player.getUuid());
         });
 
-        ServerPlayerEvents.COPY_FROM.register((oldPlayer, newPlayer, alive) -> {
-            sessionService.copyConnectionState(oldPlayer, newPlayer);
-        });
+        ServerPlayerEvents.COPY_FROM.register((oldPlayer, newPlayer, alive) ->
+                sessionService.copyConnectionState(oldPlayer, newPlayer)
+        );
 
         ServerTickEvents.END_SERVER_TICK.register(minecraftServer -> {
             if (sessionService == null || config == null || trainerBridge == null || trainerStore == null) {
@@ -115,16 +128,22 @@ public final class BestTrainerAuthMod implements ModInitializer {
 
             long autosaveInterval = config.autosaveIntervalTicks();
             if (autosaveInterval > 0 && tickCounter % autosaveInterval == 0) {
+                int savedProfiles = 0;
+
                 for (ServerPlayerEntity player : minecraftServer.getPlayerManager().getPlayerList()) {
-                    sessionService.state(player.getUuid())
-                            .flatMap(state -> java.util.Optional.ofNullable(state.trainerKey()))
-                            .ifPresent(trainerKey -> {
-                                boolean stillExists = trainerStore.exists(trainerKey);
-                                trainerBridge.autosaveActiveProfile(player, trainerKey, stillExists);
-                            });
+                    Optional<String> trainerKey = sessionService.state(player.getUuid())
+                            .flatMap(state -> Optional.ofNullable(state.trainerKey()));
+
+                    if (trainerKey.isPresent()) {
+                        boolean stillExists = trainerStore.exists(trainerKey.get());
+                        trainerBridge.autosaveActiveProfile(player, trainerKey.get(), stillExists);
+                        savedProfiles++;
+                    }
                 }
 
-                LOGGER.info("[BestTrainerAuth] Autosave completed for active profiles.");
+                if (savedProfiles > 0) {
+                    LOGGER.info("[BestProfileAuth] Autosave completed for {} active profile(s).", savedProfiles);
+                }
             }
         });
 
@@ -193,5 +212,8 @@ public final class BestTrainerAuthMod implements ModInitializer {
     public static TrainerBridge trainerBridge() {
         return trainerBridge;
     }
-}
 
+    public static MigrationStore migrationStore() {
+        return migrationStore;
+    }
+}
